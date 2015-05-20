@@ -59,6 +59,13 @@ chmod +x ./WPA-Attack
 # Detailed tutorial about WPA/WPA2 Cracking
 <a href="http://www.aircrack-ng.org/doku.php?id=cracking_wpa&DokuWiki=c14abd7131d5560715e51eb686263ade">Tutorial: How to Crack WPA/WPA2</a> 
 
+# If using raw Backtrack 5
+If you're using Backtrack 5 without any upgrades, with **aircrack-ng version 1.0** try to switch to **airodump1.0** branch and **pull request**. <br />
+```
+$ git checkout airodump1.0
+$ git pull
+```
+
 # Successfully cracked WPA Passphrase!
 If you manage to crack **WPA passphrase** you should see the following: 
 - Aircrack window should output something like

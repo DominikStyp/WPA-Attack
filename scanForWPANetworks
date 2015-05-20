@@ -1,0 +1,23 @@
+#!/bin/bash
+restartMonitor() {
+  airmon-ng stop mon0
+  airmon-ng stop wlan0
+  airmon-ng check kill
+  airmon-ng start wlan0
+}
+
+scanForWPANetworks() {
+
+  if [[ -z $(ifconfig | grep mon0) ]]; then
+      restartMonitor;
+      # try again
+      if [[ -z $(ifconfig | grep mon0) ]]; then
+	echo "Something is wrong, can't start monitor mode for wlan0";
+	exit;
+      fi
+  fi
+  airodump-ng --encrypt wpa mon0
+}
+
+# scan for WPA networks
+scanForWPANetworks

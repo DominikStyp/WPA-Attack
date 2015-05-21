@@ -60,7 +60,8 @@ chmod +x ./WPA-Attack
 <a href="http://www.aircrack-ng.org/doku.php?id=cracking_wpa&DokuWiki=c14abd7131d5560715e51eb686263ade">Tutorial: How to Crack WPA/WPA2</a> 
 
 # If using raw Backtrack 5
-If you're using Backtrack 5 without any upgrades, with **aircrack-ng version 1.0** try to switch to **airodump1.0** branch and **pull request**. <br />
+If you're using Backtrack 5 without any upgrades, with **airodump-ng version 1.0** try to switch to **airodump1.0** branch and **pull request**. <br />
+Further updates on **master** will be suited to **Airodump-ng 1.2 rc2**
 ```
 $ git checkout airodump1.0
 $ git pull

